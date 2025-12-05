@@ -4,6 +4,7 @@ from typing import Dict
 import streamlit as st
 from openai import OpenAI
 
+# Importok a külső modulokból
 from persona_engine import (
     PersonaEngine,
     FACTOR_NAME_MAP,
@@ -16,19 +17,35 @@ from persona_engine import (
 ARTIFACTS_PATH_DEFAULT = "./persona_artifacts_v1.npz"
 
 FACTOR_CODES = [
-    "REF", "FOG", "SZAM", "GYAK",
-    "VÁL", "REN", "KUT", "SZOC",
-    "MŰV", "EMO", "TEM", "RUG",
-    "CSAP", "KAP", "LÁT", "HAT",
+    "REF",
+    "FOG",
+    "SZAM",
+    "GYAK",
+    "VÁL",
+    "REN",
+    "KUT",
+    "SZOC",
+    "MŰV",
+    "EMO",
+    "TEM",
+    "RUG",
+    "CSAP",
+    "KAP",
+    "LÁT",
+    "HAT",
 ]
 
-STYLE_CODES = list(STYLE_SENTENCES.keys())  # VISSZ, URA, KER, KIE, ELK, ALK, VER, KOM, MEG
+STYLE_CODES = list(
+    STYLE_SENTENCES.keys()
+)  # VISSZ, URA, KER, KIE, ELK, ALK, VER, KOM, MEG
 
 
 # ---------- HELPER: ENGINE & OPENAI CACHE ----------
 
+
 @st.cache_resource
 def load_engine(artifacts_path: str) -> PersonaEngine:
+    """PersonaEngine betöltése gyorsítótárazva."""
     return PersonaEngine(
         mode="artifacts",
         artifacts_path=artifacts_path,
@@ -37,11 +54,18 @@ def load_engine(artifacts_path: str) -> PersonaEngine:
 
 @st.cache_resource
 def get_openai_client(api_key: str) -> OpenAI:
+    """OpenAI kliens létrehozása gyorsítótárazva."""
+    # Az API kulcs beállítása környezeti változóként a kliens inicializálásához
     os.environ["OPENAI_API_KEY"] = api_key
+    # Megjegyzés: Ha a kulcsot st.secrets-ből kapja, nem szükséges a try/except,
+    # de jó gyakorlat hibát dobni, ha a kulcs hiányzik.
+    if not api_key:
+        raise ValueError("Hiányzik az OpenAI API kulcs.")
     return OpenAI()
 
 
 # ---------- APP ----------
+
 
 def main():
     st.set_page_config(
@@ -55,11 +79,20 @@ def main():
         """
         Add meg a faktorok 1–8 közötti értékeit, az app pedig egy LLM segítségével
         **rövid személyiség-összefoglalót** készít.
+        ---
+        🔑 Az OpenAI kulcsot a beállítások menüben kell megadni. Ha az alkalmazás 
+        Streamlit Cloudban fut, megpróbálja betölteni a kulcsot a beállított titkok közül.
         """
     )
 
     # ---- Sidebar: beállítások ----
     st.sidebar.header("⚙️ Beállítások")
+
+    # 1. Próbáljuk betölteni az OpenAI titkokat a st.secrets-ből
+    default_api_key = st.secrets.get("openai_key") if hasattr(st, "secrets") else ""
+    default_model_name = (
+        st.secrets.get("model_name", "gpt-4o") if hasattr(st, "secrets") else "gpt-4o"
+    )
 
     artifacts_path = st.sidebar.text_input(
         "Artifacts fájl elérési útja",
@@ -72,14 +105,23 @@ def main():
     )
 
     st.sidebar.subheader("🔑 OpenAI API")
-    openai_api_key = st.sidebar.text_input(
-        "OPENAI_API_KEY",
-        type="password",
-        help="Add meg az OpenAI API kulcsot (GPT-4/5 modellekhez).",
-    )
+
+    # Ha van kulcs a st.secrets-ben, akkor azt állítjuk be alapértelmezettnek (megjelenítés nélkül)
+    if default_api_key:
+        openai_api_key = default_api_key
+        st.sidebar.success("OpenAI kulcs betöltve a titkok közül.")
+    else:
+        # Ha nincs, kérjük be a felhasználótól
+        openai_api_key = st.sidebar.text_input(
+            "OPENAI_API_KEY",
+            type="password",
+            help="Add meg az OpenAI API kulcsot. Ez nem kerül tárolásra.",
+        )
+
     model_name = st.sidebar.text_input(
         "Model neve",
-        value="gpt-5.1",  # vagy "gpt-4.1", "gpt-5.1", stb.
+        value=default_model_name,
+        help="A használni kívánt modell neve (pl. gpt-4o, gpt-3.5-turbo).",
     )
 
     st.sidebar.markdown("---")
@@ -108,6 +150,7 @@ def main():
                 max_value=8,
                 value=default_val,
                 step=1,
+                key=f"factor_{code}",  # Hozzáadva a biztos State Management érdekében
             )
             profile_levels[code] = float(val)
 
@@ -123,6 +166,7 @@ def main():
                 max_value=8,
                 value=4,
                 step=1,
+                key=f"style_{code}",  # Hozzáadva a biztos State Management érdekében
             )
             style_levels[code] = float(val)
 
@@ -139,15 +183,18 @@ def main():
                 return
 
             if not openai_api_key:
-                st.error("Add meg az OpenAI API kulcsot a sidebarban!")
+                st.error(
+                    "Add meg az OpenAI API kulcsot a sidebarban vagy a titkok között!"
+                )
                 return
 
             # Engine betöltés
-            try:
-                engine = load_engine(artifacts_path)
-            except Exception as e:
-                st.error(f"Nem sikerült betölteni az artifacts fájlt: {e}")
-                return
+            with st.spinner("Modell betöltése..."):
+                try:
+                    engine = load_engine(artifacts_path)
+                except Exception as e:
+                    st.error(f"Nem sikerült betölteni az artifacts fájlt: {e}")
+                    return
 
             # Persona prompt + snippets
             with st.spinner("Persona prompt generálása..."):
@@ -178,7 +225,9 @@ def main():
                     )
                     persona_text = completion.choices[0].message.content
                 except Exception as e:
-                    st.error(f"Hiba az LLM hívás közben: {e}")
+                    st.error(
+                        f"Hiba az LLM hívás közben. Ellenőrizd az API kulcsot és a modell nevét: {e}"
+                    )
                     st.subheader("Debug – prompt")
                     st.code(prompt)
                     return
@@ -194,7 +243,9 @@ def main():
                 st.json(factor_snippets)
 
         else:
-            st.info("Töltsd ki a faktor mezőket bal oldalon, add meg az API kulcsot, majd kattints a „Leírás generálása” gombra.")
+            st.info(
+                "Töltsd ki a faktor mezőket bal oldalon, add meg az API kulcsot, majd kattints a „Leírás generálása” gombra."
+            )
 
 
 if __name__ == "__main__":
