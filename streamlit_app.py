@@ -91,7 +91,7 @@ def main():
     # 1. Próbáljuk betölteni az OpenAI titkokat a st.secrets-ből
     default_api_key = st.secrets.get("openai_key") if hasattr(st, "secrets") else ""
     default_model_name = (
-        st.secrets.get("model_name", "gpt-4o") if hasattr(st, "secrets") else "gpt-4o"
+        st.secrets.get("model_name", "gpt-5.1") if hasattr(st, "secrets") else "gpt-5.1"
     )
 
     artifacts_path = st.sidebar.text_input(
